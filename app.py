@@ -1,166 +1,129 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+"""
+文件上传服务 - 基于 Flask
+包含用户认证、文件上传、文件管理、图片预览等功能
+"""
 
+import os
+import uuid
 import sqlite3
+import hashlib
 from functools import wraps
-from flask import Flask, render_template_string, request, redirect, url_for, session, flash
+from datetime import datetime
+from pathlib import Path
+from flask import Flask, render_template_string, request, redirect, url_for, session, flash, send_from_directory
 
-# 修正：去掉 @ 符号
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here-change-in-production'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 限制上传文件大小为 16MB
 
+# 配置上传文件夹
+UPLOAD_FOLDER = Path(__file__).parent / 'uploads'
+UPLOAD_FOLDER.mkdir(exist_ok=True)  # 创建上传文件夹（如果不存在）
+
+ALLOWED_EXTENSIONS = {
+    'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp',  # 图片格式
+    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',  # 文档格式
+    'txt', 'md', 'csv',  # 文本格式
+    'zip', 'rar', '7z'  # 压缩包
+}
 
 # ==================== 数据库初始化 ====================
 def init_db():
     """初始化 SQLite 数据库"""
-    conn = sqlite3.connect('library.db')
+    conn = sqlite3.connect('file_upload.db')
     cursor = conn.cursor()
 
     # 创建用户表
     cursor.execute('''
-                   CREATE TABLE IF NOT EXISTS users
-                   (
-                       id
-                       INTEGER
-                       PRIMARY
-                       KEY
-                       AUTOINCREMENT,
-                       username
-                       TEXT
-                       UNIQUE
-                       NOT
-                       NULL,
-                       password
-                       TEXT
-                       NOT
-                       NULL,
-                       created_at
-                       TIMESTAMP
-                       DEFAULT
-                       CURRENT_TIMESTAMP
-                   )
-                   ''')
+        CREATE TABLE IF NOT EXISTS users(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
 
-    # 创建图书表
+    # 创建文件记录表
     cursor.execute('''
-                   CREATE TABLE IF NOT EXISTS books
-                   (
-                       id
-                       INTEGER
-                       PRIMARY
-                       KEY
-                       AUTOINCREMENT,
-                       title
-                       TEXT
-                       NOT
-                       NULL,
-                       author
-                       TEXT
-                       NOT
-                       NULL,
-                       isbn
-                       TEXT
-                       UNIQUE,
-                       created_at
-                       TIMESTAMP
-                       DEFAULT
-                       CURRENT_TIMESTAMP
-                   )
-                   ''')
-
-    # 创建借阅记录表
-    cursor.execute('''
-                   CREATE TABLE IF NOT EXISTS borrow_records
-                   (
-                       id
-                       INTEGER
-                       PRIMARY
-                       KEY
-                       AUTOINCREMENT,
-                       book_id
-                       INTEGER
-                       NOT
-                       NULL,
-                       user_id
-                       INTEGER
-                       NOT
-                       NULL,
-                       borrow_date
-                       TIMESTAMP
-                       DEFAULT
-                       CURRENT_TIMESTAMP,
-                       return_date
-                       TIMESTAMP,
-                       status
-                       TEXT
-                       DEFAULT
-                       'borrowed',
-                       FOREIGN
-                       KEY
-                   (
-                       book_id
-                   ) REFERENCES books
-                   (
-                       id
-                   ),
-                       FOREIGN KEY
-                   (
-                       user_id
-                   ) REFERENCES users
-                   (
-                       id
-                   )
-                       )
-                   ''')
+        CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            original_filename TEXT NOT NULL,
+            stored_filename TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_size INTEGER,
+            file_type TEXT,
+            mime_type TEXT,
+            upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users (id)
+        )
+    ''')
 
     conn.commit()
     conn.close()
     print("数据库初始化完成！")
 
-
-# 初始化数据库
 init_db()
-
 
 # ==================== 辅助函数 ====================
 def simple_encrypt(password):
     """简单的密码加密"""
-    return ''.join(chr(ord(c) + 1) for c in password)
-
-
-def simple_decrypt(encrypted_password):
-    """简单的密码解密"""
-    return ''.join(chr(ord(c) - 1) for c in encrypted_password)
-
+    return hashlib.md5(password.encode()).hexdigest()
 
 def login_required(f):
     """登录验证装饰器"""
-
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'user_id' not in session:
             flash('请先登录', 'warning')
             return redirect(url_for('login'))
         return f(*args, **kwargs)
-
     return decorated_function
-
 
 def get_db_connection():
     """获取数据库连接"""
-    conn = sqlite3.connect('library.db')
+    conn = sqlite3.connect('file_upload.db')
     conn.row_factory = sqlite3.Row
     return conn
 
+def allowed_file(filename):
+    """检查文件扩展名是否允许"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def is_image_file(filename):
+    """判断是否为图片文件"""
+    ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+    return ext in {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'}
+
+def generate_filename(original_filename):
+    """生成唯一的文件名"""
+    ext = original_filename.rsplit('.', 1)[1].lower() if '.' in original_filename else ''
+    # 使用 UUID + 时间戳生成唯一文件名
+    unique_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    if ext:
+        unique_name = f"{unique_name}.{ext}"
+    return unique_name
+
+def format_file_size(size):
+    """格式化文件大小"""
+    if size < 1024:
+        return f"{size} B"
+    elif size < 1024 * 1024:
+        return f"{size / 1024:.2f} KB"
+    else:
+        return f"{size / (1024 * 1024):.2f} MB"
 
 # ==================== 路由 ====================
 @app.route('/')
 def index():
+    """首页"""
     return render_template_string(HTML_TEMPLATE, page='index')
-
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
+    """用户注册"""
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
@@ -171,15 +134,18 @@ def register():
 
         conn = get_db_connection()
         cursor = conn.cursor()
+
+        # 检查用户名是否已存在
         cursor.execute('SELECT id FROM users WHERE username = ?', (username,))
         if cursor.fetchone():
             flash('用户名已存在', 'danger')
             conn.close()
             return redirect(url_for('register'))
 
+        # 加密密码并保存
         encrypted_password = simple_encrypt(password)
         cursor.execute('INSERT INTO users (username, password) VALUES (?, ?)',
-                       (username, encrypted_password))
+                      (username, encrypted_password))
         conn.commit()
         conn.close()
 
@@ -188,9 +154,9 @@ def register():
 
     return render_template_string(HTML_TEMPLATE, page='register')
 
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    """用户登录"""
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
@@ -201,242 +167,182 @@ def login():
         user = cursor.fetchone()
         conn.close()
 
-        if user and simple_decrypt(user['password']) == password:
+        if user and user['password'] == simple_encrypt(password):
             session['user_id'] = user['id']
             session['username'] = user['username']
             flash('登录成功', 'success')
-            return redirect(url_for('books_list'))
+            return redirect(url_for('my_files'))
         else:
             flash('用户名或密码错误', 'danger')
             return redirect(url_for('login'))
 
     return render_template_string(HTML_TEMPLATE, page='login')
 
-
 @app.route('/logout')
 def logout():
+    """用户登出"""
     session.clear()
     flash('已退出登录', 'info')
     return redirect(url_for('index'))
 
-
-@app.route('/books')
-def books_list():
-    search_keyword = request.args.get('search', '').strip()
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    if search_keyword:
-        search_pattern = f'%{search_keyword}%'
-        cursor.execute('''
-                       SELECT b.*,
-                              CASE WHEN br.id IS NOT NULL AND br.status = 'borrowed' THEN 1 ELSE 0 END as is_borrowed,
-                              br.user_id                                                               as borrowed_by
-                       FROM books b
-                                LEFT JOIN borrow_records br ON b.id = br.book_id AND br.status = 'borrowed'
-                       WHERE b.title LIKE ?
-                          OR b.author LIKE ?
-                       ORDER BY b.id DESC
-                       ''', (search_pattern, search_pattern))
-    else:
-        cursor.execute('''
-                       SELECT b.*,
-                              CASE WHEN br.id IS NOT NULL AND br.status = 'borrowed' THEN 1 ELSE 0 END as is_borrowed,
-                              br.user_id                                                               as borrowed_by
-                       FROM books b
-                                LEFT JOIN borrow_records br ON b.id = br.book_id AND br.status = 'borrowed'
-                       ORDER BY b.id DESC
-                       ''')
-
-    books = cursor.fetchall()
-    conn.close()
-
-    return render_template_string(HTML_TEMPLATE, page='books_list', books=books, search=search_keyword)
-
-
-@app.route('/books/add', methods=['GET', 'POST'])
+@app.route('/upload', methods=['GET', 'POST'])
 @login_required
-def add_book():
+def upload_file():
+    """上传文件"""
     if request.method == 'POST':
-        title = request.form.get('title', '').strip()
-        author = request.form.get('author', '').strip()
-        isbn = request.form.get('isbn', '').strip()
+        # 检查是否有文件被上传
+        if 'file' not in request.files:
+            flash('请选择要上传的文件', 'danger')
+            return redirect(url_for('upload_file'))
 
-        if not title or not author:
-            flash('书名和作者不能为空', 'danger')
-            return redirect(url_for('add_book'))
+        file = request.files['file']
 
-        conn = get_db_connection()
-        cursor = conn.cursor()
+        # 检查是否选择了文件
+        if file.filename == '':
+            flash('请选择要上传的文件', 'danger')
+            return redirect(url_for('upload_file'))
+
+        # 检查文件类型是否允许
+        if not allowed_file(file.filename):
+            flash(f'不支持的文件类型，允许的类型：{", ".join(ALLOWED_EXTENSIONS)}', 'danger')
+            return redirect(url_for('upload_file'))
 
         try:
-            cursor.execute('INSERT INTO books (title, author, isbn) VALUES (?, ?, ?)',
-                           (title, author, isbn if isbn else None))
+            # 生成唯一文件名
+            stored_filename = generate_filename(file.filename)
+            file_path = UPLOAD_FOLDER / stored_filename
+
+            # 获取文件大小
+            file.seek(0, 2)  # 移动到文件末尾
+            file_size = file.tell()  # 获取当前位置（文件大小）
+            file.seek(0)  # 重置文件指针
+
+            # 保存文件
+            file.save(file_path)
+
+            # 判断文件类型
+            file_ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
+            mime_type = file.content_type or f'application/{file_ext}'
+
+            # 记录到数据库
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO files (user_id, original_filename, stored_filename, file_path, file_size, file_type, mime_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (session['user_id'], file.filename, stored_filename, str(file_path), file_size, file_ext, mime_type))
             conn.commit()
-            flash('图书添加成功', 'success')
-        except sqlite3.IntegrityError:
-            flash('ISBN已存在', 'danger')
-        finally:
             conn.close()
 
-        return redirect(url_for('books_list'))
+            flash('文件上传成功！', 'success')
+            return redirect(url_for('my_files'))
 
-    return render_template_string(HTML_TEMPLATE, page='add_book')
+        except Exception as e:
+            flash(f'上传失败：{str(e)}', 'danger')
+            return redirect(url_for('upload_file'))
 
+    return render_template_string(HTML_TEMPLATE, page='upload')
 
-@app.route('/books/edit/<int:book_id>', methods=['GET', 'POST'])
+@app.route('/my_files')
 @login_required
-def edit_book(book_id):
+def my_files():
+    """我的文件列表"""
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    if request.method == 'POST':
-        title = request.form.get('title', '').strip()
-        author = request.form.get('author', '').strip()
-        isbn = request.form.get('isbn', '').strip()
+    cursor.execute('''
+        SELECT * FROM files 
+        WHERE user_id = ? 
+        ORDER BY upload_time DESC
+    ''', (session['user_id'],))
 
-        if not title or not author:
-            flash('书名和作者不能为空', 'danger')
-            return redirect(url_for('edit_book', book_id=book_id))
+    files = cursor.fetchall()
+    conn.close()
 
-        cursor.execute('''
-                       UPDATE books
-                       SET title  = ?,
-                           author = ?,
-                           isbn   = ?
-                       WHERE id = ?
-                       ''', (title, author, isbn if isbn else None, book_id))
+    # 格式化文件大小
+    for file in files:
+        file['formatted_size'] = format_file_size(file['file_size'])
+        file['is_image'] = is_image_file(file['stored_filename'])
+
+    return render_template_string(HTML_TEMPLATE, page='my_files', files=files)
+
+@app.route('/preview/<int:file_id>')
+@login_required
+def preview_file(file_id):
+    """预览文件（图片显示缩略图，其他文件显示下载链接）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT * FROM files WHERE id = ? AND user_id = ?',
+                  (file_id, session['user_id']))
+    file = cursor.fetchone()
+    conn.close()
+
+    if not file:
+        flash('文件不存在或无权限访问', 'danger')
+        return redirect(url_for('my_files'))
+
+    return render_template_string(HTML_TEMPLATE, page='preview', file=file)
+
+@app.route('/download/<int:file_id>')
+@login_required
+def download_file(file_id):
+    """下载文件"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT * FROM files WHERE id = ? AND user_id = ?',
+                  (file_id, session['user_id']))
+    file = cursor.fetchone()
+    conn.close()
+
+    if not file:
+        flash('文件不存在或无权限访问', 'danger')
+        return redirect(url_for('my_files'))
+
+    # 发送文件
+    upload_dir = UPLOAD_FOLDER
+    return send_from_directory(
+        upload_dir,
+        file['stored_filename'],
+        as_attachment=True,
+        download_name=file['original_filename']
+    )
+
+@app.route('/delete/<int:file_id>')
+@login_required
+def delete_file(file_id):
+    """删除文件"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # 获取文件信息
+    cursor.execute('SELECT * FROM files WHERE id = ? AND user_id = ?',
+                  (file_id, session['user_id']))
+    file = cursor.fetchone()
+
+    if not file:
+        flash('文件不存在或无权限访问', 'danger')
+        conn.close()
+        return redirect(url_for('my_files'))
+
+    try:
+        # 删除物理文件
+        file_path = Path(file['file_path'])
+        if file_path.exists():
+            file_path.unlink()
+
+        # 删除数据库记录
+        cursor.execute('DELETE FROM files WHERE id = ?', (file_id,))
         conn.commit()
+
+        flash('文件删除成功', 'success')
+    except Exception as e:
+        flash(f'删除失败：{str(e)}', 'danger')
+    finally:
         conn.close()
 
-        flash('图书信息更新成功', 'success')
-        return redirect(url_for('books_list'))
-
-    cursor.execute('SELECT * FROM books WHERE id = ?', (book_id,))
-    book = cursor.fetchone()
-    conn.close()
-
-    if not book:
-        flash('图书不存在', 'danger')
-        return redirect(url_for('books_list'))
-
-    return render_template_string(HTML_TEMPLATE, page='edit_book', book=book)
-
-
-@app.route('/books/delete/<int:book_id>')
-@login_required
-def delete_book(book_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute('SELECT id FROM borrow_records WHERE book_id = ? AND status = "borrowed"', (book_id,))
-    if cursor.fetchone():
-        flash('该图书尚有未归还的借阅记录，无法删除', 'danger')
-        conn.close()
-        return redirect(url_for('books_list'))
-
-    cursor.execute('DELETE FROM borrow_records WHERE book_id = ?', (book_id,))
-    cursor.execute('DELETE FROM books WHERE id = ?', (book_id,))
-    conn.commit()
-    conn.close()
-
-    flash('图书删除成功', 'success')
-    return redirect(url_for('books_list'))
-
-
-@app.route('/borrow/<int:book_id>')
-@login_required
-def borrow_book(book_id):
-    user_id = session['user_id']
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute('SELECT id FROM books WHERE id = ?', (book_id,))
-    if not cursor.fetchone():
-        flash('图书不存在', 'danger')
-        conn.close()
-        return redirect(url_for('books_list'))
-
-    cursor.execute('SELECT id FROM borrow_records WHERE book_id = ? AND status = "borrowed"', (book_id,))
-    if cursor.fetchone():
-        flash('该书已被借出', 'danger')
-        conn.close()
-        return redirect(url_for('books_list'))
-
-    cursor.execute('''
-                   INSERT INTO borrow_records (book_id, user_id, borrow_date, status)
-                   VALUES (?, ?, datetime('now', 'localtime'), 'borrowed')
-                   ''', (book_id, user_id))
-    conn.commit()
-    conn.close()
-
-    flash('借书成功', 'success')
-    return redirect(url_for('books_list'))
-
-
-@app.route('/return/<int:book_id>')
-@login_required
-def return_book(book_id):
-    user_id = session['user_id']
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute('''
-                   SELECT id
-                   FROM borrow_records
-                   WHERE book_id = ?
-                     AND user_id = ?
-                     AND status = 'borrowed'
-                   ''', (book_id, user_id))
-    record = cursor.fetchone()
-
-    if not record:
-        flash('您没有借阅该书', 'danger')
-        conn.close()
-        return redirect(url_for('books_list'))
-
-    cursor.execute('''
-                   UPDATE borrow_records
-                   SET return_date = datetime('now', 'localtime'),
-                       status      = 'returned'
-                   WHERE id = ?
-                   ''', (record['id'],))
-    conn.commit()
-    conn.close()
-
-    flash('还书成功', 'success')
-    return redirect(url_for('books_list'))
-
-
-@app.route('/my_borrows')
-@login_required
-def my_borrows():
-    user_id = session['user_id']
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute('''
-                   SELECT br.*,
-                          b.title,
-                          b.author,
-                          b.isbn,
-                          strftime('%Y-%m-%d %H:%M', br.borrow_date) as borrow_date_fmt,
-                          CASE
-                              WHEN br.return_date IS NOT NULL
-                                  THEN strftime('%Y-%m-%d %H:%M', br.return_date)
-                              ELSE NULL END                          as return_date_fmt
-                   FROM borrow_records br
-                            JOIN books b ON br.book_id = b.id
-                   WHERE br.user_id = ?
-                   ORDER BY br.borrow_date DESC
-                   ''', (user_id,))
-
-    records = cursor.fetchall()
-    conn.close()
-
-    return render_template_string(HTML_TEMPLATE, page='my_borrows', records=records)
-
+    return redirect(url_for('my_files'))
 
 # ==================== HTML 模板 ====================
 HTML_TEMPLATE = '''
@@ -445,7 +351,7 @@ HTML_TEMPLATE = '''
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>图书管理系统</title>
+    <title>文件上传服务</title>
     <style>
         * {
             margin: 0;
@@ -457,12 +363,12 @@ HTML_TEMPLATE = '''
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
+            padding: 20px;
         }
 
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            padding: 20px;
         }
 
         .navbar {
@@ -475,6 +381,7 @@ HTML_TEMPLATE = '''
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
+            gap: 15px;
         }
 
         .navbar h1 {
@@ -486,6 +393,7 @@ HTML_TEMPLATE = '''
             display: flex;
             gap: 20px;
             flex-wrap: wrap;
+            align-items: center;
         }
 
         .nav-links a {
@@ -530,12 +438,19 @@ HTML_TEMPLATE = '''
             font-weight: 500;
         }
 
-        .form-group input {
+        .form-group input[type="text"],
+        .form-group input[type="password"],
+        .form-group input[type="file"] {
             width: 100%;
             padding: 10px;
             border: 1px solid #ddd;
             border-radius: 5px;
             font-size: 16px;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
         }
 
         .btn {
@@ -546,6 +461,12 @@ HTML_TEMPLATE = '''
             cursor: pointer;
             font-size: 16px;
             text-decoration: none;
+            transition: transform 0.2s, opacity 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            opacity: 0.9;
         }
 
         .btn-primary {
@@ -563,43 +484,14 @@ HTML_TEMPLATE = '''
             color: white;
         }
 
-        .btn-warning {
-            background: #f39c12;
-            color: white;
-        }
-
         .btn-secondary {
             background: #95a5a6;
             color: white;
         }
 
-        .table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }
-
-        .table th, .table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }
-
-        .table th {
-            background: #f8f9fa;
-        }
-
-        .search-bar {
-            margin-bottom: 20px;
-            display: flex;
-            gap: 10px;
-        }
-
-        .search-bar input {
-            flex: 1;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
+        .btn-info {
+            background: #3498db;
+            color: white;
         }
 
         .alert {
@@ -611,35 +503,113 @@ HTML_TEMPLATE = '''
         .alert-success {
             background: #d4edda;
             color: #155724;
+            border: 1px solid #c3e6cb;
         }
 
         .alert-danger {
             background: #f8d7da;
             color: #721c24;
+            border: 1px solid #f5c6cb;
         }
 
-        .status-borrowed {
-            color: #e74c3c;
-            font-weight: bold;
+        .alert-warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
         }
 
-        .status-returned {
-            color: #27ae60;
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .file-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .file-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .file-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+
+        .file-icon {
+            text-align: center;
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+
+        .file-info {
+            text-align: center;
+        }
+
+        .file-name {
             font-weight: bold;
+            color: #333;
+            margin-bottom: 5px;
+            word-break: break-all;
+        }
+
+        .file-meta {
+            font-size: 12px;
+            color: #777;
+            margin-bottom: 10px;
+        }
+
+        .file-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 10px;
+        }
+
+        .file-actions a {
+            padding: 5px 12px;
+            font-size: 12px;
+        }
+
+        .preview-container {
+            text-align: center;
+        }
+
+        .preview-image {
+            max-width: 100%;
+            max-height: 500px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+
+        @media (max-width: 768px) {
+            .navbar {
+                flex-direction: column;
+            }
+
+            .file-grid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="navbar">
-            <h1>📚 图书管理系统</h1>
+            <h1>📁 文件上传服务</h1>
             <div class="nav-links">
                 <a href="{{ url_for('index') }}">首页</a>
                 {% if session.user_id %}
-                    <a href="{{ url_for('books_list') }}">图书列表</a>
-                    <a href="{{ url_for('add_book') }}">添加图书</a>
-                    <a href="{{ url_for('my_borrows') }}">我的借阅</a>
-                    <span>欢迎, {{ session.username }}</span>
+                    <a href="{{ url_for('upload_file') }}">上传文件</a>
+                    <a href="{{ url_for('my_files') }}">我的文件</a>
+                    <span class="user-info">欢迎, {{ session.username }}</span>
                     <a href="{{ url_for('logout') }}">退出登录</a>
                 {% else %}
                     <a href="{{ url_for('login') }}">登录</a>
@@ -658,8 +628,23 @@ HTML_TEMPLATE = '''
 
         {% if page == 'index' %}
             <div class="card" style="text-align: center;">
-                <h2>欢迎使用图书管理系统</h2>
-                <p style="margin: 20px 0;">轻松管理您的图书借阅，享受阅读的乐趣</p>
+                <h2>欢迎使用文件上传服务</h2>
+                <p style="margin: 20px 0; font-size: 18px; color: #666;">
+                    安全、便捷的文件管理工具
+                </p>
+                <p style="margin: 10px 0; color: #888;">
+                    支持图片、文档、压缩包等多种格式
+                </p>
+                {% if not session.user_id %}
+                    <div style="margin-top: 30px;">
+                        <a href="{{ url_for('login') }}" class="btn btn-primary">登录</a>
+                        <a href="{{ url_for('register') }}" class="btn btn-success">注册</a>
+                    </div>
+                {% else %}
+                    <div style="margin-top: 30px;">
+                        <a href="{{ url_for('upload_file') }}" class="btn btn-primary">立即上传文件</a>
+                    </div>
+                {% endif %}
             </div>
 
         {% elif page == 'register' %}
@@ -696,109 +681,80 @@ HTML_TEMPLATE = '''
                 </form>
             </div>
 
-        {% elif page == 'books_list' %}
+        {% elif page == 'upload' %}
             <div class="card">
-                <h2>图书列表</h2>
-                <div class="search-bar">
-                    <form method="GET" style="display: flex; gap: 10px; width: 100%;">
-                        <input type="text" name="search" placeholder="按书名或作者搜索..." value="{{ search or '' }}">
-                        <button type="submit" class="btn btn-primary">搜索</button>
-                    </form>
-                </div>
-                <a href="{{ url_for('add_book') }}" class="btn btn-success">添加新书</a>
-                {% if books %}
-                    <table class="table">
-                        <thead>
-                            <tr><th>书名</th><th>作者</th><th>ISBN</th><th>状态</th><th>操作</th></tr>
-                        </thead>
-                        <tbody>
-                            {% for book in books %}
-                            <tr>
-                                <td>{{ book.title }}</td>
-                                <td>{{ book.author }}</td>
-                                <td>{{ book.isbn or '-' }}</td>
-                                <td>{% if book.is_borrowed %}已借出{% else %}可借{% endif %}</td>
-                                <td>
-                                    <a href="{{ url_for('edit_book', book_id=book.id) }}">编辑</a>
-                                    {% if not book.is_borrowed %}
-                                        <a href="{{ url_for('borrow_book', book_id=book.id) }}">借书</a>
-                                    {% elif book.borrowed_by == session.user_id %}
-                                        <a href="{{ url_for('return_book', book_id=book.id) }}">还书</a>
+                <h2>上传文件</h2>
+                <form method="POST" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label>选择文件</label>
+                        <input type="file" name="file" required>
+                        <small style="color: #777; display: block; margin-top: 5px;">
+                            支持格式：图片、文档、压缩包等（最大 16MB）
+                        </small>
+                    </div>
+                    <button type="submit" class="btn btn-primary">上传</button>
+                    <a href="{{ url_for('my_files') }}" class="btn btn-secondary">取消</a>
+                </form>
+            </div>
+
+        {% elif page == 'my_files' %}
+            <div class="card">
+                <h2>我的文件</h2>
+                {% if files %}
+                    <div class="file-grid">
+                        {% for file in files %}
+                            <div class="file-card">
+                                <div class="file-icon">
+                                    {% if file.is_image %}
+                                        🖼️
+                                    {% elif file.file_type in ['pdf'] %}
+                                        📄
+                                    {% elif file.file_type in ['doc', 'docx'] %}
+                                        📝
+                                    {% elif file.file_type in ['xls', 'xlsx'] %}
+                                        📊
+                                    {% elif file.file_type in ['zip', 'rar', '7z'] %}
+                                        📦
+                                    {% else %}
+                                        📎
                                     {% endif %}
-                                    <a href="{{ url_for('delete_book', book_id=book.id) }}" onclick="return confirm('确定删除？')">删除</a>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                                </div>
+                                <div class="file-info">
+                                    <div class="file-name">{{ file.original_filename }}</div>
+                                    <div class="file-meta">{{ file.formatted_size }} • {{ file.upload_time[:10] }}</div>
+                                    <div class="file-actions">
+                                        <a href="{{ url_for('preview_file', file_id=file.id) }}" class="btn btn-info">预览</a>
+                                        <a href="{{ url_for('download_file', file_id=file.id) }}" class="btn btn-success">下载</a>
+                                        <a href="{{ url_for('delete_file', file_id=file.id) }}" class="btn btn-danger" onclick="return confirm('确定删除？')">删除</a>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
                 {% else %}
-                    <p>暂无图书</p>
+                    <p style="text-align: center; padding: 40px; color: #999;">暂无文件，<a href="{{ url_for('upload_file') }}">点击上传</a></p>
                 {% endif %}
             </div>
 
-        {% elif page == 'add_book' %}
-            <div class="card" style="max-width: 600px; margin: 0 auto;">
-                <h2>添加图书</h2>
-                <form method="POST">
-                    <div class="form-group">
-                        <label>书名 *</label>
-                        <input type="text" name="title" required>
-                    </div>
-                    <div class="form-group">
-                        <label>作者 *</label>
-                        <input type="text" name="author" required>
-                    </div>
-                    <div class="form-group">
-                        <label>ISBN</label>
-                        <input type="text" name="isbn">
-                    </div>
-                    <button type="submit" class="btn btn-primary">添加</button>
-                    <a href="{{ url_for('books_list') }}">返回</a>
-                </form>
-            </div>
-
-        {% elif page == 'edit_book' %}
-            <div class="card" style="max-width: 600px; margin: 0 auto;">
-                <h2>编辑图书</h2>
-                <form method="POST">
-                    <div class="form-group">
-                        <label>书名 *</label>
-                        <input type="text" name="title" value="{{ book.title }}" required>
-                    </div>
-                    <div class="form-group">
-                        <label>作者 *</label>
-                        <input type="text" name="author" value="{{ book.author }}" required>
-                    </div>
-                    <div class="form-group">
-                        <label>ISBN</label>
-                        <input type="text" name="isbn" value="{{ book.isbn or '' }}">
-                    </div>
-                    <button type="submit" class="btn btn-primary">保存</button>
-                    <a href="{{ url_for('books_list') }}">取消</a>
-                </form>
-            </div>
-
-        {% elif page == 'my_borrows' %}
+        {% elif page == 'preview' %}
             <div class="card">
-                <h2>我的借阅记录</h2>
-                {% if records %}
-                    <table class="table">
-                        <thead><tr><th>书名</th><th>作者</th><th>借阅时间</th><th>归还时间</th><th>状态</th></tr></thead>
-                        <tbody>
-                            {% for record in records %}
-                            <tr>
-                                <td>{{ record.title }}</td>
-                                <td>{{ record.author }}</td>
-                                <td>{{ record.borrow_date_fmt }}</td>
-                                <td>{{ record.return_date_fmt or '-' }}</td>
-                                <td>{% if record.status == 'borrowed' %}借阅中{% else %}已归还{% endif %}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                {% else %}
-                    <p>暂无借阅记录</p>
-                {% endif %}
+                <h2>文件预览</h2>
+                <div class="preview-container">
+                    {% if file.is_image %}
+                        <img src="{{ url_for('download_file', file_id=file.id) }}" class="preview-image" alt="{{ file.original_filename }}">
+                    {% else %}
+                        <div style="padding: 40px;">
+                            <div style="font-size: 64px; margin-bottom: 20px;">📄</div>
+                            <p>暂不支持在线预览此类型文件</p>
+                            <p>文件名：{{ file.original_filename }}</p>
+                            <p>大小：{{ file.formatted_size }}</p>
+                            <a href="{{ url_for('download_file', file_id=file.id) }}" class="btn btn-primary">下载文件</a>
+                        </div>
+                    {% endif %}
+                </div>
+                <div style="margin-top: 20px; text-align: center;">
+                    <a href="{{ url_for('my_files') }}" class="btn btn-secondary">返回列表</a>
+                </div>
             </div>
         {% endif %}
     </div>
