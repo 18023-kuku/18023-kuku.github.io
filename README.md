@@ -18,11 +18,11 @@
 
 #### 智能家居系统
 > 基于 Linux 嵌入式 + Qt 开发，实现温湿度监测、风扇/蜂鸣器控制及数码管显示  
-> [查看源码](https://github.com/18023-kuku/smart-home)（待上传）
+
 
 #### 智能门禁系统
 > 基于嵌入式 Linux + Qt + 百度AI接口，实现人脸识别门禁控制及用户注册/删除功能  
-> [查看源码](https://github.com/18023-kuku/smart-door)（待上传）
+
 
 ---
 
