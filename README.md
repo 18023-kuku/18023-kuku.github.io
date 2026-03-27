@@ -1,47 +1,54 @@
-# 18023-kuku.github.io
-王雷的技术博客
-# 王雷的技术博客
 
-2026届物联网工程专业 · 求职嵌入式/后端开发
+# 王雷 · 技术博客
+
+2026届物联网工程专业 · 求职嵌入式开发 / 后端开发
 
 ---
 
 ## 📌 关于我
 - 四川轻化工大学 物联网工程 2026届
-- 熟悉 C/C++、Python、Java 基础
-- 有嵌入式、后端开发项目经验
-- 学习能力强，做事踏实
+- 熟悉 C/C++、Python，了解 Flask 框架
+- 有嵌入式、后端项目开发经验
 
 ---
 
-## 📂 我的项目
+## 📂 项目
 
-### 图书管理系统（Java + Spring Boot + MySQL）
-> 图书管理后端系统，实现用户登录、图书借阅、归还、查询等功能  
+### 🔧 硬件/嵌入式项目
+
+#### 智能家居系统
+> 基于 Linux 嵌入式 + Qt 开发，实现温湿度监测、风扇/蜂鸣器控制及数码管显示  
+> [查看源码](https://github.com/18023-kuku/smart-home)（待上传）
+
+#### 智能门禁系统
+> 基于嵌入式 Linux + Qt + 百度AI接口，实现人脸识别门禁控制及用户注册/删除功能  
+> [查看源码](https://github.com/18023-kuku/smart-door)（待上传）
+
+---
+
+### 💻 软件/后端项目
+
+#### 待办事项 API
+> 基于 Python + Flask + JWT 开发的 RESTful API，支持用户认证、待办事项增删改查  
+> [查看源码](https://github.com/18023-kuku/18023-kuku.github.io/tree/main/测试)
+
+#### 图书管理系统
+> 基于 Python + Flask + SQLite 开发的图书管理 Web 应用，支持用户登录、图书增删改查、借阅记录  
 > [查看源码](https://github.com/18023-kuku/library-system)（待上传）
 
-### 个人博客系统（Python + Flask）
-> 轻量级博客系统，支持文章发布、评论功能  
-> [查看源码](https://github.com/18023-kuku/myblog)（待上传）
-
-### 学生成绩管理系统（Java + MySQL）
-> 控制台版成绩管理系统，实现成绩录入、统计、查询  
-> [查看源码](https://github.com/18023-kuku/grade-system)（待上传）
-
-### 智能家居系统（STM32 + Qt + Linux）
-> 嵌入式项目，温湿度监测、风扇控制、Qt界面  
-> [查看源码](https://github.com/18023-kuku/smart-home)（待上传）
+#### 文件上传服务
+> 基于 Python + Flask 开发的文件上传服务，支持图片预览、文件列表展示  
+> [查看源码](https://github.com/18023-kuku/file-upload)（待上传）
 
 ---
 
 ## 📝 学习笔记
-- [C语言面试题整理]()
-- [嵌入式八股文汇总]()
-- [Linux常用命令]()
-- [Java基础笔记]()
+- [Python 面试题整理]()
+- [Flask 框架笔记]()
+- [嵌入式八股文]()
 
 ---
 
 ## 📫 联系方式
 - 邮箱：1802379850@qq.com
-- 电话：15181598567
+- GitHub：https://github.com/18023-kuku
