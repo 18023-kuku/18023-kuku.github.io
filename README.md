@@ -1,4 +1,3 @@
-
 # 王雷 · 技术博客
 
 2026届物联网工程专业 · 求职嵌入式开发 / 后端开发
@@ -18,11 +17,11 @@
 
 #### 智能家居系统
 > 基于 Linux 嵌入式 + Qt 开发，实现温湿度监测、风扇/蜂鸣器控制及数码管显示  
-
+> 负责传感器调试、多模块联调测试、项目汇报
 
 #### 智能门禁系统
 > 基于嵌入式 Linux + Qt + 百度AI接口，实现人脸识别门禁控制及用户注册/删除功能  
-
+> 参与界面调试、系统联调测试、项目汇报
 
 ---
 
@@ -30,15 +29,15 @@
 
 #### 待办事项 API
 > 基于 Python + Flask + JWT 开发的 RESTful API，支持用户认证、待办事项增删改查  
-> [查看源码](https://github.com/18023-kuku/18023-kuku.github.io/tree/main/测试)
+> [查看源码](https://github.com/18023-kuku/todo-api)
 
 #### 图书管理系统
 > 基于 Python + Flask + SQLite 开发的图书管理 Web 应用，支持用户登录、图书增删改查、借阅记录  
-> [查看源码](https://github.com/18023-kuku/library-system)（待上传）
+> [查看源码](https://github.com/18023-kuku/library-system)
 
 #### 文件上传服务
 > 基于 Python + Flask 开发的文件上传服务，支持图片预览、文件列表展示  
-> [查看源码](https://github.com/18023-kuku/file-upload)（待上传）
+> [查看源码](https://github.com/18023-kuku/file-upload)
 
 ---
 
