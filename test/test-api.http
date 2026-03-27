@@ -1,0 +1,44 @@
+### 注册用户
+POST http://localhost:5000/auth/register
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "password": "password123"
+}
+
+### 登录
+POST http://localhost:5000/auth/login
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "password": "password123"
+}
+
+### 创建待办事项（登录后替换 YOUR_TOKEN）
+POST http://localhost:5000/todos
+Content-Type: application/json
+Authorization: Bearer YOUR_TOKEN
+
+{
+  "title": "测试任务",
+  "content": "这是一个测试任务"
+}
+
+### 获取待办事项列表
+GET http://localhost:5000/todos
+Authorization: Bearer YOUR_TOKEN
+
+### 更新待办事项状态
+PUT http://localhost:5000/todos/1
+Content-Type: application/json
+Authorization: Bearer YOUR_TOKEN
+
+{
+  "completed": true
+}
+
+### 删除待办事项
+DELETE http://localhost:5000/todos/1
+Authorization: Bearer YOUR_TOKEN
